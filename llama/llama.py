@@ -1,6 +1,5 @@
 import equinox as eqx
 import jax
-from beartype import beartype
 from jaxtyping import Array, Float32, Integer, PRNGKeyArray, jaxtyped
 
 from .llama_config import LLaMAConfig
@@ -22,7 +21,7 @@ class LLaMA(eqx.Module):
         key_embeddings, key = jax.random.split(key)
         self.embeddings = eqx.nn.Embedding(
             config.size_vocab,
-            config.size_layer,
+            config.dim,
             key=key_embeddings,
         )
 
@@ -42,13 +41,13 @@ class LLaMA(eqx.Module):
             key=key_head,
         )
 
-    @jaxtyped(typechecker=beartype)
     def __call__(
         self,
         tokens: Integer[Array, " seq_len"],
         enable_dropout: bool = False,
         key: PRNGKeyArray | None = None,
     ) -> Float32[Array, " seq_len size_vocab"]:
+        # print(tokens.shape)
         xs = jax.vmap(self.embeddings)(tokens)
 
         for layer in self.layers:

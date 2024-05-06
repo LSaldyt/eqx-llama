@@ -1,57 +1,13 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from beartype import beartype
-from jaxtyping import Array, Float32, PRNGKeyArray, jaxtyped
+import jax.random as jr
+import numpy     as np
+from typing import Tuple 
+from jaxtyping import Array, Float32, PRNGKeyArray
 
 from .llama_config import LLaMAConfig
 from .normalization import RMSLayerNorm
-
-
-# def rotary_kernel(x: Float32[Array, " 2"], m_theta: float) -> Float32[Array, " 2"]:
-def rotary_kernel(x, m_theta):
-    """The core operation of rotary embeddings acts over two dimensions."""
-    theta_kernel = jnp.array(
-        [
-            [jnp.cos(m_theta), -jnp.sin(m_theta)],
-            [jnp.sin(m_theta), jnp.cos(m_theta)],
-        ]
-    )
-    return theta_kernel @ x
-
-
-# def generalized_rotary_kernel(
-#     x: Float32[Array, " size"], m: Float32, thetas: Float32[Array, " half_size"]
-# ) -> Float32[Array, " half_size"]:
-def generalized_rotary_kernel(x, m, thetas):
-    """Applies the rotary kernel along a vector of even dimension.
-
-    Thetas must be provided.
-    """
-    pairs_of_xi = jnp.reshape(
-        x,
-        newshape=(-1, 2),
-        order="C",  # Order is critical to be consistent with the original LLaMAs!
-    )
-    pairs_of_embeddings = jax.vmap(rotary_kernel)(pairs_of_xi, m * thetas)
-    return jax.lax.collapse(pairs_of_embeddings, 0, 2)
-
-
-def apply_rotary_embeddings(
-    xs: Float32[Array, " seq_len size"],
-    *,
-    theta_base: float = 1e4,
-    dtype=jnp.float16,
-) -> Float32[Array, " seq_len size"]:
-    """Applies the rotary kernel through a full sequence with even dimension."""
-    half_dim = xs.shape[1] // 2
-    ms = jnp.arange(0, xs.shape[0])
-    thetas = theta_base ** (-jnp.arange(0, half_dim, dtype=dtype) / half_dim)
-    return jax.vmap(
-        generalized_rotary_kernel,
-        in_axes=[0, 0, None],
-    )(xs, ms, thetas)
-
 
 def compute_attention_scores(
     q: Float32[Array, " head_dim"],
@@ -61,7 +17,6 @@ def compute_attention_scores(
     head_dim = q.shape[0]
     unnormalized_scores = jnp.inner(q, ks) / jnp.sqrt(head_dim) + mask
     return jax.nn.softmax(unnormalized_scores)
-
 
 def compute_self_attention(
     qs: Float32[Array, " seqlen head_dim"],
@@ -78,6 +33,64 @@ def compute_self_attention(
     scores = jax.vmap(compute_attention_scores, in_axes=(0, None, 0))(qs, ks, mask)
     return scores @ vs
 
+def precompute_freqs_cis(dim: int, end: int, theta: float=50000.0, dtype: jnp.dtype=jnp.float32) -> jnp.ndarray:
+    freqs     = 1.0 / (theta ** (np.arange(0, dim, 2)[: (dim // 2)].astype(dtype) / dim))
+    t         = np.arange(end)  # type: ignore
+    freqs     = np.outer(t, freqs).astype(dtype)  # type: ignore
+    sin, cos  = np.sin(freqs), np.cos(freqs)
+    freqs_cis = np.complex64(cos + 1j * sin)
+    return jnp.asarray(freqs_cis)
+
+def apply_rotary_emb(
+    xq: jnp.ndarray, 
+    xk: jnp.ndarray, 
+    freqs_cis: jnp.ndarray, 
+    dtype: jnp.dtype=jnp.float32, 
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    # Note that there will be no batch dim from our point of view (within vmap)
+    print('in')
+    print(xq.shape)
+    print(xk.shape)
+    
+    reshape_xq = xq.astype(jnp.float32).reshape(*xq.shape[:-1], -1, 2)
+    reshape_xk = xk.astype(jnp.float32).reshape(*xk.shape[:-1], -1, 2)
+
+    print('reshape')
+    print(reshape_xq.shape)
+    print(reshape_xk.shape)
+    
+    xq_ = jax.lax.complex(reshape_xq[..., 0], reshape_xq[..., 1])
+    xk_ = jax.lax.complex(reshape_xk[..., 0], reshape_xk[..., 1])
+    print('complex')
+    print(xq_.shape)
+    print(xk_.shape)
+
+    print('freqs_cis')
+    print(freqs_cis.shape)
+
+    # add head dim
+    freqs_cis = jnp.reshape(freqs_cis, (*freqs_cis.shape[:1], 1, *freqs_cis.shape[1:]))
+    print('freqs_cis reshape')
+    print(freqs_cis.shape)
+    
+    xq_out = xq_ * freqs_cis
+    xq_out = jnp.stack((jnp.real(xq_out), jnp.imag(xq_out)), axis=-1).reshape(*xq_out.shape[:-1], -1)
+
+    xk_out = xk_ * freqs_cis
+    xk_out = jnp.stack((jnp.real(xk_out), jnp.imag(xk_out)), axis=-1).reshape(*xk_out.shape[:-1], -1)
+
+    return xq_out.astype(dtype), xk_out.astype(dtype)
+
+def repeat_kv(
+    hidden_states: jnp.ndarray,
+    n_rep: int,
+) -> jnp.ndarray:
+    slen, num_key_value_heads, head_dim = hidden_states.shape # No batch dim
+    if n_rep == 1:
+        return hidden_states
+    hidden_states = hidden_states[:, :, None, :] # No batch dim
+    hidden_states = jnp.repeat(hidden_states, n_rep, axis=3)
+    return hidden_states.reshape(slen, num_key_value_heads * n_rep, head_dim) # No batch dim
 
 class AttentionModule(eqx.Module):
     norm: RMSLayerNorm
@@ -86,91 +99,73 @@ class AttentionModule(eqx.Module):
     linear_v: eqx.nn.Linear
     linear_o: eqx.nn.Linear
 
-    num_attention_heads: int = eqx.field(static=True)
-    size_attention_heads: int = eqx.field(static=True)
+    n_rep  :    int = eqx.field(static=True)
+    n_heads:    int = eqx.field(static=True)
+    n_kv_heads: int = eqx.field(static=True)
+    head_dim:   int = eqx.field(static=True)
 
-    def __init__(
-        self,
-        config: LLaMAConfig,
-        *,
-        key: PRNGKeyArray,
-    ):
-        assert (
-            config.num_attention_heads * config.size_attention_heads
-            == config.size_layer
-        )
-        self.num_attention_heads = config.num_attention_heads
-        self.size_attention_heads = config.size_attention_heads
+    freqs_cis : jnp.ndarray
 
-        self.norm = RMSLayerNorm(config.size_layer)
+    def __init__(self, config: LLaMAConfig, *, key: PRNGKeyArray):
+        self.n_heads    = config.n_heads
+        self.n_kv_heads = config.n_kv_heads
+        self.n_rep      = config.n_heads // config.n_kv_heads
+        self.head_dim   = config.dim // config.n_heads
 
-        key_linear, key = jax.random.split(key)
-        self.linear_q = eqx.nn.Linear(
-            config.size_layer,
-            config.size_layer,
-            use_bias=False,
-            key=key_linear,
-        )
+        self.norm = RMSLayerNorm(config.dim)
 
-        key_linear, key = jax.random.split(key)
-        self.linear_k = eqx.nn.Linear(
-            config.size_layer,
-            config.size_layer,
-            use_bias=False,
-            key=key_linear,
-        )
+        Lin = lambda d, o, k : eqx.nn.Linear(d, o, use_bias=False, key=k)
+        kq, kk, kv, ko = jr.split(key, 4)
 
-        key_linear, key = jax.random.split(key)
-        self.linear_v = eqx.nn.Linear(
-            config.size_layer,
-            config.size_layer,
-            use_bias=False,
-            key=key_linear,
-        )
+        self.linear_q = Lin(config.dim, config.n_heads    * self.head_dim, kq)
+        self.linear_k = Lin(config.dim, config.n_kv_heads * self.head_dim, kk)
+        self.linear_v = Lin(config.dim, config.n_kv_heads * self.head_dim, kv)
+        self.linear_o = Lin(config.dim, config.dim, ko)
 
-        key_linear, key = jax.random.split(key)
-        self.linear_o = eqx.nn.Linear(
-            config.size_layer,
-            config.size_layer,
-            use_bias=False,
-            key=key_linear,
-        )
+        self.freqs_cis = precompute_freqs_cis(self.head_dim, config.max_sequence_length * 2,
+                                              theta=config.rope_theta,
+                                              dtype=jnp.float32) # TODO Generalize types
 
-    def _compute_embeddings(
-        self,
-        xs: Float32[Array, " seq_len size_layer"],
-        linear: eqx.nn.Linear,
-        use_position_embeddings: bool = False,
-    ) -> Float32[Array, " seq_len num_heads size_heads"]:
-        projected_xs = jax.vmap(linear)(xs)
-        hs = jnp.reshape(
-            projected_xs,
-            newshape=(-1, self.num_attention_heads, self.size_attention_heads),
-        )
-        if not use_position_embeddings:
-            return hs
-        return jax.vmap(apply_rotary_embeddings, in_axes=1, out_axes=1)(hs)
+        # TODO implement caching/autoregression
+        # self.cache_k = jnp.zeros((config.max_batch_size, config.max_sequence_length,
+        #                           self.n_kv_heads, self.head_dim))
+        # self.cache_v = jnp.zeros((config.max_batch_size, config.max_sequence_length,
+        #                           self.n_kv_heads, self.head_dim))
 
-    @jaxtyped(typechecker=beartype)
-    def __call__(
-        self,
-        xs: Float32[Array, " seq_len size_layer"],
-        enable_dropout: bool = False,
-        key: PRNGKeyArray | None = None,
-    ) -> Float32[Array, " seq_len size_layer"]:
-        xs_normalized = jax.vmap(self.norm)(xs)
-        qs = self._compute_embeddings(
-            xs_normalized,
-            self.linear_q,
-            use_position_embeddings=True,
-        )
-        ks = self._compute_embeddings(
-            xs_normalized,
-            self.linear_k,
-            use_position_embeddings=True,
-        )
-        vs = self._compute_embeddings(xs_normalized, self.linear_v)
+    def _split_heads(self, h, num_heads):
+        return h.reshape(h.shape[:1] + (num_heads, self.head_dim))
+
+    def _merge_heads(self, hidden_states):
+        return hidden_states.reshape(hidden_states.shape[:1] + (self.embed_dim,))
+
+    def __call__(self, hidden):
+        hidden = jax.vmap(self.norm)(hidden)
+
+        print(jax.vmap(self.linear_q)(hidden).shape)
+
+        xq = self._split_heads(jax.vmap(self.linear_q)(hidden), self.n_heads)
+        xk = self._split_heads(jax.vmap(self.linear_k)(hidden), self.n_kv_heads)
+        xv = self._split_heads(jax.vmap(self.linear_v)(hidden), self.n_kv_heads)
+
+        start_pos = 0 # TODO generalize for autoregression
+        seq_len   = hidden.shape[0] # There is no batch dimension!
+        freqs_cis = self.freqs_cis[start_pos:start_pos + seq_len] # TODO Check freqs_cis shape
+        qs, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis, dtype=jnp.float32) # self.dtype) # TODO
+
+        ks = repeat_kv(xk, self.n_rep)
+        vs = repeat_kv(xv, self.n_rep)
+
+        # TODO This pattern mimics the official torch release cache implementation
+        # TODO If we'd like autoregressive caching, use this
+        # self.cache_k = self.cache_k.at[:bs, start_pos : start_pos + seqlen].set(xk)
+        # self.cache_v = self.cache_v.at[:bs, start_pos : start_pos + seqlen].set(xv)
+        # keys   = self.cache_k[:bs, start_pos + seqlen]
+        # values = self.cache_v[:bs, start_pos + seqlen]
+        # TODO Consider using bits (e.g. masking) from the flax implementation
+        # TODO calculate the attention mask if needed
+
         attention_out = jax.vmap(compute_self_attention, in_axes=(1, 1, 1), out_axes=1)(
-            qs, ks, vs
+             qs, ks, vs
         )
         return jax.vmap(self.linear_o)(jax.lax.collapse(attention_out, 1, 3))
+
