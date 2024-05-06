@@ -104,7 +104,7 @@ class AttentionModule(eqx.Module):
     n_kv_heads: int = eqx.field(static=True)
     head_dim:   int = eqx.field(static=True)
 
-    freqs_cis : jnp.ndarray
+    freqs_cis : jnp.ndarray = eqx.field(static=True) # Do not update this!
 
     def __init__(self, config: LLaMAConfig, *, key: PRNGKeyArray):
         self.n_heads    = config.n_heads
