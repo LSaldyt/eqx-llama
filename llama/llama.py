@@ -47,8 +47,6 @@ class LLaMA(eqx.Module):
         enable_dropout: bool = False,
         key: PRNGKeyArray | None = None,
     ) -> Float32[Array, " seq_len size_vocab"]:
-        print('llama equinox input tokens')
-        print(tokens)
         xs = jax.vmap(self.embeddings)(tokens)
 
         for layer in self.layers:
@@ -60,7 +58,4 @@ class LLaMA(eqx.Module):
             self.head,
             in_axes=(0, None, None),
         )(xs, enable_dropout, key_head)
-
-        print('final output')
-        print(out)
         return out
