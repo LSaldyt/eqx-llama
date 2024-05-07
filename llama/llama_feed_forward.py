@@ -1,6 +1,7 @@
 import equinox as eqx
 import jax
 from jaxtyping import Array, Float32, PRNGKeyArray, jaxtyped
+import jax.random as jr
 
 from .llama_config import LLaMAConfig
 from .normalization import RMSLayerNorm
@@ -20,29 +21,12 @@ class FeedForwardModule(eqx.Module):
     ):
         self.norm = RMSLayerNorm(config.dim)
 
-        key_linear, key = jax.random.split(key)
-        self.linear_in_1 = eqx.nn.Linear(
-            config.dim,
-            config.size_hidden,
-            use_bias=False,
-            key=key_linear,
-        )
+        Lin = lambda d, o, k : eqx.nn.Linear(d, o, use_bias=False, key=k)
+        k0, k1, k2 = jr.split(key, 3)
 
-        key_linear, key = jax.random.split(key)
-        self.linear_in_2 = eqx.nn.Linear(
-            config.dim,
-            config.size_hidden,
-            use_bias=False,
-            key=key_linear,
-        )
-
-        key_linear, key = jax.random.split(key)
-        self.linear_out = eqx.nn.Linear(
-            config.size_hidden,
-            config.dim,
-            use_bias=False,
-            key=key_linear,
-        )
+        self.linear_in_1 = Lin(config.dim, config.size_hidden, k0)
+        self.linear_in_2 = Lin(config.dim, config.size_hidden, k1)
+        self.linear_out  = Lin(config.size_hidden, config.dim, k2)
 
     def __call__(
         self,
