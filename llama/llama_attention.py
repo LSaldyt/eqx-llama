@@ -158,37 +158,37 @@ class AttentionModule(eqx.Module):
         xq = self._split_heads(jax.vmap(self.linear_q)(hidden), self.n_heads)
         xk = self._split_heads(jax.vmap(self.linear_k)(hidden), self.n_kv_heads)
         xv = self._split_heads(jax.vmap(self.linear_v)(hidden), self.n_kv_heads)
-        print('xq')
-        print(xq)
-        print('xk')
-        print(xk)
-        print('xv')
-        print(xv)
+        # print('xq')
+        # print(xq)
+        # print('xk')
+        # print(xk)
+        # print('xv')
+        # print(xv)
 
         start_pos = 0 # TODO generalize for autoregression
         seq_len   = hidden.shape[0] # There is no batch dimension!
         freqs_cis = self.freqs_cis[start_pos:start_pos + seq_len] # TODO Check freqs_cis shape
 
-        print('freqs_cis')
-        print(freqs_cis)
-        print(freqs_cis.shape)
+        # print('freqs_cis')
+        # print(freqs_cis)
+        # print(freqs_cis.shape)
 
         qs, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis, dtype=jnp.float32) # self.dtype) # TODO
 
-        print('qs rotary')
-        print(qs)
-        print('xk rotary')
-        print(xk)
+        # print('qs rotary')
+        # print(qs)
+        # print('xk rotary')
+        # print(xk)
 
         ks = repeat_kv(xk, self.n_rep)
         vs = repeat_kv(xv, self.n_rep)
 
-        print('keys')
-        print(ks)
-        print('values')
-        print(vs)
-        print('queries')
-        print(qs)
+        # print('keys')
+        # print(ks)
+        # print('values')
+        # print(vs)
+        # print('queries')
+        # print(qs)
 
         # TODO This pattern mimics the official torch release cache implementation
         # TODO If we'd like autoregressive caching, use this
@@ -202,10 +202,10 @@ class AttentionModule(eqx.Module):
         attention_out = jax.vmap(compute_self_attention, in_axes=(1, 1, 1), out_axes=1)(
              qs, ks, vs
         )
-        print('attention out')
-        print(attention_out)
+        # print('attention out')
+        # print(attention_out)
         result = jax.vmap(self.linear_o)(jax.lax.collapse(attention_out, 1, 3))
-        print('result')
-        print(result)
+        # print('result')
+        # print(result)
         return result
 

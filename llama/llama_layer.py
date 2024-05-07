@@ -37,6 +37,4 @@ class LLaMALayer(eqx.Module):
     ) -> Float32[Array, " seq_len size_layer"]:
         xs = xs + self.attention_module(xs)
         xs = xs + self.feed_forward_module(xs)
-        print('layer')
-        print(xs)
         return xs
