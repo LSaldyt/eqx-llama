@@ -47,8 +47,11 @@ class LLaMA(eqx.Module):
         enable_dropout: bool = False,
         key: PRNGKeyArray | None = None,
     ) -> Float32[Array, " seq_len size_vocab"]:
-        #  print(tokens.shape)
+        print(tokens)
+        print(tokens.shape)
         xs = jax.vmap(self.embeddings)(tokens)
+        print(xs)
+        print(xs.shape)
 
         for layer in self.layers:
             key_layer, key = jax.random.split(key) if key else None, None
