@@ -49,8 +49,7 @@ class LLaMA3Tokenizer:
     def __init__(self, model_path: str):
         """
         Initializes the Tokenizer with a Tiktoken model.
-
-        Args:
+Args:
             model_path (str): The path to the Tiktoken model file.
         """
         assert os.path.isfile(model_path), model_path
