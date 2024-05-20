@@ -40,4 +40,6 @@ def load_llama_pretrained(model, checkpoint_path, n_layers, load_head=False):
     if load_head:
         model = load(lambda m : m.head.linear.weight, 'output.weight', model)
 
+    pprint(model)
+
     return model

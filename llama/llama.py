@@ -1,6 +1,6 @@
 import equinox as eqx
 import jax
-from jaxtyping import Array, Float32, Integer, PRNGKeyArray, jaxtyped
+from jaxtyping import Array, Float16, Integer, PRNGKeyArray, jaxtyped
 
 from .llama_config import LLaMAConfig
 from .llama_head import LLaMAHead
@@ -23,6 +23,7 @@ class LLaMA(eqx.Module):
             config.size_vocab,
             config.dim,
             key=key_embeddings,
+            dtype=config.dtype
         )
 
         self.layers = []
@@ -47,7 +48,7 @@ class LLaMA(eqx.Module):
         enable_dropout: bool = False,
         key: PRNGKeyArray | None = None,
         apply_head=True
-    ) -> Float32[Array, " seq_len size_vocab"]:
+    ) -> Float16[Array, " seq_len size_vocab"]:
         xs = jax.vmap(self.embeddings)(tokens)
 
         for layer in self.layers:

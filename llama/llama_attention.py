@@ -4,25 +4,25 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy     as np
 from typing import Tuple 
-from jaxtyping import Array, Float32, PRNGKeyArray
+from jaxtyping import Array, Float16, PRNGKeyArray
 
 from .llama_config import LLaMAConfig
 from .normalization import RMSLayerNorm
 
 def compute_attention_scores(
-    q: Float32[Array, " head_dim"],
-    ks: Float32[Array, " seqlen head_dim"],
-    mask: Float32[Array, " seqlen"],
-) -> Float32[Array, " seqlen"]:
+    q: Float16[Array, " head_dim"],
+    ks: Float16[Array, " seqlen head_dim"],
+    mask: Float16[Array, " seqlen"],
+) -> Float16[Array, " seqlen"]:
     head_dim = q.shape[0]
     unnormalized_scores = jnp.inner(q, ks) / jnp.sqrt(head_dim) + mask
     return jax.nn.softmax(unnormalized_scores)
 
 def compute_self_attention(
-    qs: Float32[Array, " seqlen head_dim"],
-    ks: Float32[Array, " seqlen head_dim"],
-    vs: Float32[Array, " seqlen head_dim"],
-) -> Float32[Array, " seqlen head_dim"]:
+    qs: Float16[Array, " seqlen head_dim"],
+    ks: Float16[Array, " seqlen head_dim"],
+    vs: Float16[Array, " seqlen head_dim"],
+) -> Float16[Array, " seqlen head_dim"]:
     """Computes the full self-attention.
 
     Uses vmap rather than einsums or messy transpositions / reshapes...
@@ -45,7 +45,7 @@ def apply_rotary_emb(
     xq: jnp.ndarray, 
     xk: jnp.ndarray, 
     freqs_cis: jnp.ndarray, 
-    dtype: jnp.dtype=jnp.float32, 
+    dtype: jnp.dtype=jnp.bfloat16, 
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     
     reshape_xq = xq.astype(jnp.float32).reshape(*xq.shape[:-1], -1, 2)
@@ -98,7 +98,7 @@ class AttentionModule(eqx.Module):
 
         self.norm = RMSLayerNorm(config.dim)
 
-        Lin = lambda d, o, k : eqx.nn.Linear(d, o, use_bias=False, key=k)
+        Lin = lambda d, o, k : eqx.nn.Linear(d, o, use_bias=False, key=k, dtype=config.dtype)
         kq, kk, kv, ko = jr.split(key, 4)
 
         self.linear_q = Lin(config.dim, config.n_heads    * self.head_dim, kq)
