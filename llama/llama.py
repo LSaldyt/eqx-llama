@@ -52,10 +52,10 @@ class LLaMA(eqx.Module):
         xs = jax.vmap(self.embeddings)(tokens)
 
         for layer in self.layers:
-            key_layer, key = jax.random.split(key) if key else None, None
+            key_layer, key = jax.random.split(key) if key is not None else None, None
             xs = layer(xs, enable_dropout, key_layer)
 
-        key_head, key = jax.random.split(key) if key else None, None
+        key_head, key = jax.random.split(key) if key is not None else None, None
         if apply_head:
             out = jax.vmap(
                 self.head,
